@@ -29,7 +29,7 @@ export interface Match {
   rotationId: string;
   poolId?: string;
   knockoutRound?: number;
-  isConsolation?: boolean;
+  consolationLevel?: number; // 0 or undefined = main, 1 = consolante, 2 = consolante de consolante, etc.
   scoreA?: number;
   scoreB?: number;
   status: MatchStatus;
@@ -51,6 +51,7 @@ export interface KnockoutRound {
   round: number;
   matches: Match[];
   byeTeamIds?: string[];
+  consolationLevel?: number;
 }
 
 export interface ScoringConfig {

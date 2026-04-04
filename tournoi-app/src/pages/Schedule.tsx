@@ -7,12 +7,8 @@ import { generateKnockoutMatches, assignMatchesToRotations } from '../utils/sche
 import { exportTournamentPDF, exportResultsCSV } from '../utils/export';
 import BracketView, { getWinner, getLoser, getRoundLabel } from '../components/BracketView';
 
-function getTeamName(tournament: Tournament, teamId: string): string {
-  return tournament.teams.find(t => t.id === teamId)?.name ?? 'Equipe ?';
-}
-function getCourtName(tournament: Tournament, courtId: string): string {
-  return tournament.courts.find(c => c.id === courtId)?.name ?? 'Terrain ?';
-}
+function getTeamName(t: Tournament, id: string) { return t.teams.find(x => x.id === id)?.name ?? '?'; }
+function getCourtName(t: Tournament, id: string) { return t.courts.find(x => x.id === id)?.name ?? 'Terrain ?'; }
 
 export default function Schedule() {
   const { id } = useParams<{ id: string }>();
@@ -47,8 +43,8 @@ export default function Schedule() {
   if (!tournament || !id) {
     return (
       <div style={{ padding: 24, background: '#f5f5f5', minHeight: '100vh' }}>
-        <p style={{ color: '#1e293b' }}>Tournoi introuvable.</p>
-        <button onClick={() => navigate('/')} style={linkBtn}>Retour a l'accueil</button>
+        <p>Tournoi introuvable.</p>
+        <button onClick={() => navigate('/')} style={linkBtn}>Retour</button>
       </div>
     );
   }
@@ -58,113 +54,157 @@ export default function Schedule() {
   const allMatches = rotations.flatMap(r => r.matches);
   const allFinished = allMatches.length > 0 && allMatches.every(m => m.status === 'finished' || m.status === 'forfeit');
 
-  // --- Knockout detection ---
+  // --- Knockout analysis ---
   const isPoolsKnockout = tournament.format === 'pools_knockout';
   const isKnockout = tournament.format === 'knockout';
   const hasKnockout = isPoolsKnockout || isKnockout;
 
-  const poolMatchIds = new Set(
-    tournament.pools.flatMap(p => allMatches.filter(m => m.poolId === p.id).map(m => m.id))
-  );
+  const poolMatchIds = new Set(tournament.pools.flatMap(p => allMatches.filter(m => m.poolId === p.id).map(m => m.id)));
   const poolMatches = allMatches.filter(m => poolMatchIds.has(m.id));
   const knockoutMatches = allMatches.filter(m => m.knockoutRound != null);
-  const mainKO = knockoutMatches.filter(m => !m.isConsolation);
-  const consolationKO = knockoutMatches.filter(m => m.isConsolation);
   const poolsFinished = poolMatches.length > 0 && poolMatches.every(m => m.status === 'finished' || m.status === 'forfeit');
-  const knockoutNotStarted = isPoolsKnockout && poolsFinished && mainKO.length === 0;
+  const knockoutNotStarted = isPoolsKnockout && poolsFinished && knockoutMatches.length === 0;
 
-  // Group by round
-  const groupByRound = (matches: Match[]) => {
-    const map = new Map<number, Match[]>();
-    for (const m of matches) { const r = m.knockoutRound ?? 0; if (!map.has(r)) map.set(r, []); map.get(r)!.push(m); }
-    return map;
+  // Group KO matches by consolation level
+  const getLevel = (m: Match) => m.consolationLevel ?? 0;
+  const allLevels = [...new Set(knockoutMatches.map(getLevel))].sort((a, b) => a - b);
+
+  // For each level, get rounds and their status
+  type LevelInfo = {
+    level: number;
+    rounds: Map<number, Match[]>;
+    maxRound: number;
+    lastMatches: Match[];
+    lastDone: boolean;
+    isFinal: boolean; // last round has only 1 match and it's done
   };
-  const mainRounds = groupByRound(mainKO);
-  const consolationRounds = groupByRound(consolationKO);
-  const sortedMainRoundNums = Array.from(mainRounds.keys()).sort((a, b) => a - b);
-  const sortedConsoRoundNums = Array.from(consolationRounds.keys()).sort((a, b) => a - b);
 
-  const maxMainRound = sortedMainRoundNums.length > 0 ? sortedMainRoundNums[sortedMainRoundNums.length - 1] : 0;
-  const lastMainMatches = mainRounds.get(maxMainRound) ?? [];
-  const lastMainDone = lastMainMatches.length > 0 && lastMainMatches.every(m => m.status === 'finished' || m.status === 'forfeit');
+  const levelInfos: LevelInfo[] = allLevels.map(level => {
+    const matches = knockoutMatches.filter(m => getLevel(m) === level);
+    const rounds = new Map<number, Match[]>();
+    for (const m of matches) { const r = m.knockoutRound ?? 0; if (!rounds.has(r)) rounds.set(r, []); rounds.get(r)!.push(m); }
+    const sortedRounds = [...rounds.keys()].sort((a, b) => a - b);
+    const maxRound = sortedRounds.length > 0 ? sortedRounds[sortedRounds.length - 1] : 0;
+    const lastMatches = rounds.get(maxRound) ?? [];
+    const lastDone = lastMatches.length > 0 && lastMatches.every(m => m.status === 'finished' || m.status === 'forfeit');
+    const isFinal = lastDone && lastMatches.length === 1;
+    return { level, rounds, maxRound, lastMatches, lastDone, isFinal };
+  });
 
-  const maxConsoRound = sortedConsoRoundNums.length > 0 ? sortedConsoRoundNums[sortedConsoRoundNums.length - 1] : 0;
-  const lastConsoMatches = consolationRounds.get(maxConsoRound) ?? [];
-  const lastConsoDone = lastConsoMatches.length > 0 && lastConsoMatches.every(m => m.status === 'finished' || m.status === 'forfeit');
+  // Check if there are rounds to advance
+  // A level needs "next round" if its last round is done AND has more than 1 match
+  const levelsNeedingAdvance = levelInfos.filter(li => li.lastDone && li.lastMatches.length > 1);
+  // Also need to generate consolation for losers of each finished round
+  // A consolation at level L+1 is needed when level L's last round finishes with >=2 matches
+  // AND no consolation for those losers exists yet
 
-  // Need next main round?
-  const needsNextMainRound = hasKnockout && lastMainDone && lastMainMatches.length > 1;
-  // Need next consolation round?
-  const needsNextConsoRound = hasKnockout && lastConsoDone && lastConsoMatches.length > 1;
-  // Also need to generate consolation for newly finished main round losers
-  const mainRoundJustFinished = hasKnockout && lastMainDone && lastMainMatches.length >= 2;
-  // Check if consolation for this main round's losers has already been created
-  const consoExistsForRound = consolationRounds.has(maxMainRound);
-  const needsNewConsoFromMain = mainRoundJustFinished && !consoExistsForRound && lastMainMatches.length >= 2;
+  const canAdvance = hasKnockout && levelsNeedingAdvance.length > 0;
 
-  const knockoutDone = hasKnockout && lastMainDone && lastMainMatches.length === 1;
+  // Main bracket winner
+  const mainInfo = levelInfos.find(li => li.level === 0);
+  const mainWinnerDone = mainInfo?.isFinal ?? false;
 
-  // --- Cascade: editing knockout match removes later rounds ---
-  const handleValidateKnockout = (matchId: string, matchRound: number, isConsolation: boolean) => {
+  // --- Handle advance: generate next round for all ready brackets ---
+  const handleAdvanceAll = () => {
+    if (!id) return;
+    let newKRounds = [...tournament.knockoutRounds];
+    let newRotations = [...rotations];
+
+    for (const li of levelsNeedingAdvance) {
+      const byeIds = getByes(li.level, li.maxRound);
+      const winnerIds = [...li.lastMatches.map(getWinner), ...byeIds];
+      const loserIds = li.lastMatches.map(getLoser);
+
+      // Winners → next round at same level
+      if (winnerIds.length >= 2) {
+        const winnerTeams = winnerIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
+        const kr = generateKnockoutMatches(winnerTeams, li.maxRound + 1);
+        kr.consolationLevel = li.level;
+        kr.matches.forEach(m => { m.consolationLevel = li.level; });
+        const rots = assignMatchesToRotations(kr.matches, tournament.courts);
+        const maxNum = newRotations.length > 0 ? Math.max(...newRotations.map(r => r.number)) : 0;
+        rots.forEach((r, i) => { r.number = maxNum + i + 1; });
+        newKRounds.push(kr);
+        newRotations.push(...rots);
+      }
+
+      // Losers → consolation at level+1 (only if >=2 losers)
+      if (loserIds.length >= 2) {
+        const loserTeams = loserIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
+        const consoLevel = li.level + 1;
+        const kr = generateKnockoutMatches(loserTeams, li.maxRound);
+        kr.consolationLevel = consoLevel;
+        kr.matches.forEach(m => { m.consolationLevel = consoLevel; });
+        const rots = assignMatchesToRotations(kr.matches, tournament.courts);
+        const maxNum = newRotations.length > 0 ? Math.max(...newRotations.map(r => r.number)) : 0;
+        rots.forEach((r, i) => { r.number = maxNum + i + 1; });
+        newKRounds.push(kr);
+        newRotations.push(...rots);
+      }
+    }
+
+    setKnockoutRounds(id, newKRounds);
+    setRotations(id, newRotations);
+    setActiveRotation(newRotations.length - 1);
+  };
+
+  const getByes = (level: number, round: number): string[] => {
+    const kr = tournament.knockoutRounds.find(kr =>
+      kr.round === round && (kr.consolationLevel ?? 0) === level
+    );
+    return kr?.byeTeamIds ?? [];
+  };
+
+  // --- Cascade on edit ---
+  const handleValidateKnockout = (matchId: string, matchRound: number, matchLevel: number) => {
     const s = scores[matchId];
     updateMatch(id, matchId, { scoreA: s?.a ?? 0, scoreB: s?.b ?? 0, status: 'finished' });
     setEditing(prev => ({ ...prev, [matchId]: false }));
 
-    // Remove later rounds of same bracket type
-    const roundNums = isConsolation ? sortedConsoRoundNums : sortedMainRoundNums;
-    const allKO = isConsolation ? consolationKO : mainKO;
-    const laterRounds = roundNums.filter(r => r > matchRound);
+    // Remove all later rounds at same level AND all consolation levels generated from this level's later rounds
+    const affectedMatches = knockoutMatches.filter(m => {
+      const mLevel = getLevel(m);
+      const mRound = m.knockoutRound ?? 0;
+      // Same level, later round
+      if (mLevel === matchLevel && mRound > matchRound) return true;
+      // Higher consolation level generated from this level's rounds >= matchRound
+      if (mLevel > matchLevel) return true;
+      return false;
+    });
 
-    if (laterRounds.length > 0) {
-      const laterMatchIds = new Set(
-        laterRounds.flatMap(r => allKO.filter(m => m.knockoutRound === r).map(m => m.id))
-      );
-      // Also remove consolation rounds generated from later main rounds if editing main bracket
-      let consoToRemove = new Set<string>();
-      if (!isConsolation) {
-        for (const r of laterRounds) {
-          const consoOfRound = consolationKO.filter(m => m.knockoutRound === r);
-          consoOfRound.forEach(m => consoToRemove.add(m.id));
-        }
-        // Also remove consolation for the current round since results changed
-        const consoOfCurrent = consolationKO.filter(m => m.knockoutRound === matchRound);
-        consoOfCurrent.forEach(m => consoToRemove.add(m.id));
-      }
+    if (affectedMatches.length > 0) {
+      const removeIds = new Set(affectedMatches.map(m => m.id));
+      const filteredRots = rotations
+        .map(r => ({ ...r, matches: r.matches.filter(m => !removeIds.has(m.id)) }))
+        .filter(r => r.matches.length > 0);
+      setRotations(id, filteredRots);
 
-      const allToRemove = new Set([...laterMatchIds, ...consoToRemove]);
-      const filteredRotations = rotations
-        .map(rot => ({ ...rot, matches: rot.matches.filter(m => !allToRemove.has(m.id)) }))
-        .filter(rot => rot.matches.length > 0);
-      setRotations(id, filteredRotations);
-
-      const keptKRounds = tournament.knockoutRounds.filter(kr => {
-        if (!isConsolation) return kr.round <= matchRound && !laterRounds.includes(kr.round);
-        return true; // keep main rounds when editing consolation
+      const keptKR = tournament.knockoutRounds.filter(kr => {
+        const krLevel = kr.consolationLevel ?? 0;
+        if (krLevel === matchLevel && kr.round > matchRound) return false;
+        if (krLevel > matchLevel) return false;
+        return true;
       });
-      setKnockoutRounds(id, keptKRounds);
+      setKnockoutRounds(id, keptKR);
     }
   };
 
+  // --- Standard handlers ---
   const handleValidate = (matchId: string) => {
     const match = allMatches.find(m => m.id === matchId);
     if (match?.knockoutRound != null) {
-      handleValidateKnockout(matchId, match.knockoutRound, !!match.isConsolation);
+      handleValidateKnockout(matchId, match.knockoutRound, getLevel(match));
       return;
     }
     const s = scores[matchId];
     updateMatch(id, matchId, { scoreA: s?.a ?? 0, scoreB: s?.b ?? 0, status: 'finished' });
     setEditing(prev => ({ ...prev, [matchId]: false }));
   };
-
   const handleEdit = (matchId: string, scoreA: number, scoreB: number) => {
     setScores(prev => ({ ...prev, [matchId]: { a: scoreA, b: scoreB } }));
     setEditing(prev => ({ ...prev, [matchId]: true }));
   };
-
-  const handleForfait = (matchId: string) => {
-    updateMatch(id, matchId, { scoreA: 0, scoreB: 0, status: 'forfeit' });
-  };
-
+  const handleForfait = (matchId: string) => { updateMatch(id, matchId, { scoreA: 0, scoreB: 0, status: 'forfeit' }); };
   const setScore = (matchId: string, side: 'a' | 'b', value: number) => {
     setScores(prev => ({ ...prev, [matchId]: { a: prev[matchId]?.a ?? 0, b: prev[matchId]?.b ?? 0, [side]: value } }));
   };
@@ -180,56 +220,17 @@ export default function Schedule() {
       qualifiedTeamIds.push(...sorted.slice(0, qualifiedPerPool).map(s => s.teamId));
     }
     if (qualifiedTeamIds.length < 2) { alert('Pas assez d\'equipes qualifiees.'); return; }
-    const qualifiedTeams = qualifiedTeamIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
-    appendKnockoutRound(qualifiedTeams, 1, false);
-  };
-
-  // Get bye team IDs for a given round and consolation flag
-  const getByeTeamIds = (round: number, isConsolation: boolean): string[] => {
-    const kr = tournament.knockoutRounds.find(kr => kr.round === round &&
-      (isConsolation ? kr.matches.some(m => m.isConsolation) || (kr.byeTeamIds?.length ?? 0) > 0 : !kr.matches.some(m => m.isConsolation))
-    );
-    return kr?.byeTeamIds ?? [];
-  };
-
-  const handleNextMainRound = () => {
-    const winnerIds = lastMainMatches.map(getWinner);
-    const byeIds = getByeTeamIds(maxMainRound, false);
-    const allNextIds = [...winnerIds, ...byeIds];
-    if (allNextIds.length < 2) return;
-    const nextTeams = allNextIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
-    appendKnockoutRound(nextTeams, maxMainRound + 1, false);
-  };
-
-  const handleGenerateConsolation = () => {
-    const loserIds = lastMainMatches.map(getLoser);
-    if (loserIds.length < 2) return;
-    const loserTeams = loserIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
-    appendKnockoutRound(loserTeams, maxMainRound, true);
-  };
-
-  const handleNextConsoRound = () => {
-    const winnerIds = lastConsoMatches.map(getWinner);
-    const byeIds = getByeTeamIds(maxConsoRound, true);
-    const allNextIds = [...winnerIds, ...byeIds];
-    if (allNextIds.length < 2) return;
-    const nextTeams = allNextIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
-    appendKnockoutRound(nextTeams, maxConsoRound + 1, true);
-  };
-
-  function appendKnockoutRound(teams: typeof tournament.teams, roundNum: number, isConsolation: boolean) {
-    const kr = generateKnockoutMatches(teams, roundNum);
-    // Mark consolation
-    if (isConsolation) {
-      kr.matches.forEach(m => { m.isConsolation = true; });
-    }
-    const newRots = assignMatchesToRotations(kr.matches, tournament.courts);
-    const maxRotNum = rotations.length > 0 ? Math.max(...rotations.map(r => r.number)) : 0;
-    const renumbered = newRots.map((r, i) => ({ ...r, number: maxRotNum + i + 1 }));
+    const teams = qualifiedTeamIds.map(tid => tournament.teams.find(t => t.id === tid)).filter((t): t is NonNullable<typeof t> => t != null);
+    const kr = generateKnockoutMatches(teams, 1);
+    kr.consolationLevel = 0;
+    kr.matches.forEach(m => { m.consolationLevel = 0; });
+    const rots = assignMatchesToRotations(kr.matches, tournament.courts);
+    const maxNum = rotations.length > 0 ? Math.max(...rotations.map(r => r.number)) : 0;
+    rots.forEach((r, i) => { r.number = maxNum + i + 1; });
     setKnockoutRounds(id, [...tournament.knockoutRounds, kr]);
-    setRotations(id, [...rotations, ...renumbered]);
+    setRotations(id, [...rotations, ...rots]);
     setActiveRotation(rotations.length);
-  }
+  };
 
   // --- Exports ---
   const handleExportPDF = () => {
@@ -252,35 +253,59 @@ export default function Schedule() {
     const st = calculateStandings(allMatches, teamIds, tournament.scoring);
     exportResultsCSV(tournament, sortStandings(st, tournament.tiebreakers, allMatches));
   };
-  const handleFinish = () => { if (!allFinished) return; if (window.confirm('Terminer le tournoi ?')) finishTournament(id); };
+  const handleFinish = () => { if (window.confirm('Terminer le tournoi ?')) finishTournament(id); };
   const formatTime = (s: number) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 
+  // --- Compute final rankings from knockout results ---
+  const computeRankings = (): { teamId: string; rank: number }[] | null => {
+    if (!hasKnockout || knockoutMatches.length === 0) return null;
+    // Only compute if all brackets are done (all finals played)
+    const allBracketsDone = levelInfos.every(li => li.isFinal || li.lastMatches.length === 0);
+    if (!allBracketsDone) return null;
+
+    const rankings: { teamId: string; rank: number }[] = [];
+    let currentRank = 1;
+    // Main bracket winner = 1st, loser = base for next consolation
+    // Level 0 final: winner = 1st, loser starts at position after winners of all levels
+    // Actually simpler: winners of finals at each level get consecutive ranks
+    // Level 0 winner = 1st, Level 0 loser = plays in level 1, etc.
+    // Level N winner = rank based on bracket position
+
+    // Sort levels: 0 first, then 1, 2, etc.
+    for (const li of levelInfos) {
+      if (li.lastMatches.length === 1) {
+        const m = li.lastMatches[0];
+        const done = m.status === 'finished' || m.status === 'forfeit';
+        if (done) {
+          rankings.push({ teamId: getWinner(m), rank: currentRank++ });
+          rankings.push({ teamId: getLoser(m), rank: currentRank++ });
+        }
+      }
+    }
+    return rankings.length > 0 ? rankings : null;
+  };
+
+  // --- Match card ---
   const renderMatchCard = (match: Match) => {
     const isFinished = match.status === 'finished';
     const isForfeit = match.status === 'forfeit';
     const isDone = (isFinished || isForfeit) && !editing[match.id];
-    const koRoundMatches = match.knockoutRound != null
-      ? knockoutMatches.filter(m => m.knockoutRound === match.knockoutRound && !!m.isConsolation === !!match.isConsolation)
-      : [];
+    const level = getLevel(match);
+    const levelLabel = level === 0 ? '' : `Consolante ${level}`;
 
     return (
       <div key={match.id} style={{
         background: isFinished && !editing[match.id] ? '#f0fdf4' : isForfeit && !editing[match.id] ? '#fefce8' : '#fff',
         borderRadius: 12, padding: 14, marginBottom: 10, boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        borderLeft: level > 0 ? `3px solid ${level === 1 ? '#f59e0b' : level === 2 ? '#8b5cf6' : '#ec4899'}` : 'none',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
           <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
             {getCourtName(tournament, match.courtId)}
           </span>
-          {match.knockoutRound != null && (
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
-              background: match.isConsolation ? '#fef3c7' : '#eff6ff',
-              color: match.isConsolation ? '#92400e' : '#2563eb',
-            }}>
-              {getRoundLabel(koRoundMatches.length, !!match.isConsolation)}
-            </span>
-          )}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {levelLabel && <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 5px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>{levelLabel}</span>}
+          </div>
         </div>
 
         {isDone ? (
@@ -319,6 +344,8 @@ export default function Schedule() {
     );
   };
 
+  const rankings = computeRankings();
+
   return (
     <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '16px', color: '#1e293b', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', maxWidth: 700, margin: '0 auto' }}>
       {/* Header */}
@@ -340,8 +367,7 @@ export default function Schedule() {
         <div style={{ display: 'flex', gap: 6 }}>
           {!timerRunning
             ? <button onClick={startTimer} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#22c55e', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Demarrer</button>
-            : <button onClick={stopTimer} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#ef4444', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Stop</button>
-          }
+            : <button onClick={stopTimer} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#ef4444', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>Stop</button>}
           <button onClick={resetTimer} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #475569', background: 'transparent', color: '#94a3b8', fontSize: 13, cursor: 'pointer' }}>Reset</button>
         </div>
       </div>
@@ -352,7 +378,7 @@ export default function Schedule() {
           <button onClick={() => setShowBracket(!showBracket)} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#1e293b', marginBottom: 8, width: '100%' }}>
             {showBracket ? 'Masquer l\'arbre' : 'Afficher l\'arbre eliminatoire'}
           </button>
-          {showBracket && <BracketView tournament={tournament} knockoutMatches={knockoutMatches} />}
+          {showBracket && <BracketView tournament={tournament} knockoutMatches={knockoutMatches} knockoutRounds={tournament.knockoutRounds} />}
         </div>
       )}
 
@@ -367,47 +393,39 @@ export default function Schedule() {
         </div>
       )}
 
-      {/* Next main round + consolation generation */}
-      {needsNextMainRound && (
+      {/* Advance button — single button for all brackets */}
+      {canAdvance && (
         <div style={{ background: '#fef3c7', border: '2px solid #f59e0b', borderRadius: 12, padding: 16, marginBottom: 12, textAlign: 'center' }}>
-          <p style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 600 }}>Tour principal termine !</p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button onClick={handleNextMainRound} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#2563eb', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 14 }}>
-              {getRoundLabel(Math.ceil(lastMainMatches.length / 2), false)}
-            </button>
-            {needsNewConsoFromMain && (
-              <button onClick={handleGenerateConsolation} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 14 }}>
-                Consolante ({lastMainMatches.length} perdants)
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Next consolation round (if not same trigger as main) */}
-      {!needsNextMainRound && needsNextConsoRound && (
-        <div style={{ background: '#fef3c7', border: '2px solid #f59e0b', borderRadius: 12, padding: 16, marginBottom: 12, textAlign: 'center' }}>
-          <p style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 600 }}>Tour consolante termine !</p>
-          <button onClick={handleNextConsoRound} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 14 }}>
-            {getRoundLabel(Math.ceil(lastConsoMatches.length / 2), true)}
-          </button>
-        </div>
-      )}
-
-      {/* Consolation available but not yet generated */}
-      {!needsNextMainRound && needsNewConsoFromMain && !knockoutDone && (
-        <div style={{ background: '#fef9c3', border: '2px solid #eab308', borderRadius: 12, padding: 16, marginBottom: 12, textAlign: 'center' }}>
-          <button onClick={handleGenerateConsolation} style={{ padding: '10px 20px', borderRadius: 8, border: 'none', background: '#eab308', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 14 }}>
-            Lancer la consolante ({lastMainMatches.length} perdants)
+          <p style={{ margin: '0 0 6px', fontSize: 15, fontWeight: 600 }}>Matchs termines !</p>
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#64748b' }}>
+            Les vainqueurs passent au tour suivant, les perdants jouent en consolante.
+          </p>
+          <button onClick={handleAdvanceAll} style={{ padding: '12px 24px', borderRadius: 8, border: 'none', background: '#f59e0b', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: 16 }}>
+            Tour suivant (+ consolantes)
           </button>
         </div>
       )}
 
       {/* Winner */}
-      {knockoutDone && (
+      {mainWinnerDone && (
         <div style={{ background: '#d1fae5', border: '2px solid #22c55e', borderRadius: 12, padding: 16, marginBottom: 12, textAlign: 'center' }}>
           <p style={{ margin: '0 0 4px', fontSize: 13, color: '#065f46', fontWeight: 600 }}>VAINQUEUR</p>
-          <p style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{getTeamName(tournament, getWinner(lastMainMatches[0]))}</p>
+          <p style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>{getTeamName(tournament, getWinner(mainInfo!.lastMatches[0]))}</p>
+        </div>
+      )}
+
+      {/* Rankings */}
+      {rankings && rankings.length > 0 && (
+        <div style={{ background: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+          <h3 style={{ margin: '0 0 10px', fontSize: 15, fontWeight: 700 }}>Classement final</h3>
+          {rankings.map(r => (
+            <div key={r.teamId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid #f1f5f9' }}>
+              <span style={{ width: 28, fontSize: 14, fontWeight: 700, color: r.rank <= 3 ? '#f59e0b' : '#64748b' }}>
+                {r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : `${r.rank}.`}
+              </span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{getTeamName(tournament, r.teamId)}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -415,16 +433,16 @@ export default function Schedule() {
       <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 12, paddingBottom: 4 }}>
         {rotations.map((r, i) => {
           const rotFinished = r.matches.every(m => m.status === 'finished' || m.status === 'forfeit');
-          const hasKO = r.matches.some(m => m.knockoutRound != null);
-          const hasConso = r.matches.some(m => m.isConsolation);
+          const maxLevel = Math.max(...r.matches.map(m => m.consolationLevel ?? 0), 0);
+          const colors = ['#e2e8f0', '#eff6ff', '#fef3c7', '#f3e8ff', '#fce7f3'];
+          const bg = i === activeRotation ? '#2563eb' : rotFinished ? '#d1fae5' : (colors[maxLevel] ?? '#e2e8f0');
           return (
             <button key={r.id} onClick={() => setActiveRotation(i)} style={{
-              padding: '7px 14px', borderRadius: 8, border: 'none',
-              background: i === activeRotation ? '#2563eb' : rotFinished ? '#d1fae5' : hasConso ? '#fef3c7' : hasKO ? '#eff6ff' : '#e2e8f0',
+              padding: '7px 14px', borderRadius: 8, border: 'none', background: bg,
               color: i === activeRotation ? '#fff' : rotFinished ? '#065f46' : '#1e293b',
               fontWeight: 600, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
             }}>
-              R{r.number} {rotFinished && i !== activeRotation ? '\u2713' : ''}
+              R{r.number}{rotFinished && i !== activeRotation ? ' \u2713' : ''}
             </button>
           );
         })}
@@ -453,7 +471,4 @@ export default function Schedule() {
   );
 }
 
-const linkBtn: React.CSSProperties = {
-  padding: '10px 20px', borderRadius: 8, border: '1px solid #d1d5db',
-  background: '#fff', color: '#1e293b', fontWeight: 500, cursor: 'pointer', fontSize: 14, marginTop: 16,
-};
+const linkBtn: React.CSSProperties = { padding: '10px 20px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', color: '#1e293b', fontWeight: 500, cursor: 'pointer', fontSize: 14, marginTop: 16 };

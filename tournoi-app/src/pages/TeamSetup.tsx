@@ -199,6 +199,8 @@ export default function TeamSetup() {
       setRotations(id, rotations);
     } else if (format === 'knockout') {
       const knockoutRound = generateKnockoutMatches(teams, 1);
+      knockoutRound.consolationLevel = 0;
+      knockoutRound.matches.forEach(m => { m.consolationLevel = 0; });
       const rotations = assignMatchesToRotations(knockoutRound.matches, courts);
       setKnockoutRounds(id, [knockoutRound]);
       setRotations(id, rotations);

@@ -196,7 +196,7 @@ export default function BigScreen() {
         return koMatches.length > 0 ? (
           <div style={{ maxWidth: 900, margin: '0 auto 40px' }}>
             <h2 style={{ textAlign: 'center', fontSize: 20, color: '#94a3b8', marginBottom: 16 }}>Phase eliminatoire</h2>
-            <BracketView tournament={tournament} knockoutMatches={koMatches} dark />
+            <BracketView tournament={tournament} knockoutMatches={koMatches} knockoutRounds={tournament.knockoutRounds} dark />
           </div>
         ) : null;
       })()}
