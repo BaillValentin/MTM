@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useTournamentStore } from './store/tournamentStore';
 import Home from './pages/Home';
 import TournamentSetup from './pages/TournamentSetup';
@@ -32,7 +32,7 @@ function TournamentRedirect() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/tournament/new" element={<TournamentSetup />} />
@@ -43,6 +43,6 @@ export default function App() {
         <Route path="/tournament/:id/classements" element={<Rankings />} />
         <Route path="/tournament/:id/bigscreen" element={<BigScreen />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

@@ -5,7 +5,7 @@ import type { Tournament, Match, TeamStanding } from '../types/tournament';
 import { calculateStandings, sortStandings } from '../utils/rankings';
 import { generateKnockoutMatches, assignMatchesToRotations } from '../utils/scheduler';
 import { exportTournamentPDF, exportResultsCSV } from '../utils/export';
-import BracketView, { getWinner, getLoser, getRoundLabel } from '../components/BracketView';
+import BracketView, { getWinner, getLoser } from '../components/BracketView';
 
 function getTeamName(t: Tournament, id: string) { return t.teams.find(x => x.id === id)?.name ?? '?'; }
 function getCourtName(t: Tournament, id: string) { return t.courts.find(x => x.id === id)?.name ?? 'Terrain ?'; }
@@ -454,7 +454,7 @@ export default function Schedule() {
       {/* Bottom actions */}
       <div style={{ background: '#fff', borderRadius: 12, padding: 16, marginTop: 16, marginBottom: 32, boxShadow: '0 1px 3px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <button onClick={() => navigate(`/tournament/${id}/classements`)} style={{ padding: '12px', borderRadius: 8, border: 'none', background: '#2563eb', color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 15 }}>Voir les classements</button>
-        <button onClick={() => window.open(`/tournament/${id}/bigscreen`, '_blank')} style={{ padding: '12px', borderRadius: 8, border: '1px solid #2563eb', background: '#fff', color: '#2563eb', fontWeight: 600, cursor: 'pointer', fontSize: 15 }}>Vue grand ecran</button>
+        <button onClick={() => window.open(`${window.location.pathname}#/tournament/${id}/bigscreen`, '_blank')} style={{ padding: '12px', borderRadius: 8, border: '1px solid #2563eb', background: '#fff', color: '#2563eb', fontWeight: 600, cursor: 'pointer', fontSize: 15 }}>Vue grand ecran</button>
         <button onClick={() => navigate(`/tournament/${id}/setup`)} style={{ padding: '12px', borderRadius: 8, border: '1px solid #e2e8f0', background: '#fff', color: '#64748b', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>Modifier les parametres</button>
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={handleExportPDF} style={{ flex: 1, padding: '10px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', color: '#1e293b', fontWeight: 600, cursor: 'pointer', fontSize: 14 }}>PDF</button>

@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import type { Match, Tournament, KnockoutRound } from '../types/tournament';
 
 function getTeamName(tournament: Tournament, teamId: string): string {
@@ -122,7 +123,7 @@ export default function BracketView({ tournament, knockoutMatches, knockoutRound
   const CONN_W = 20;
   const GAP = 3;
 
-  const renderNode = (node: BNode): JSX.Element => {
+  const renderNode = (node: BNode): ReactElement => {
     if (node.type === 'bye') {
       return (
         <div style={{ display: 'flex', alignItems: 'center', padding: `${GAP / 2}px 0` }}>
