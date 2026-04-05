@@ -10,7 +10,7 @@ import {
 } from '../utils/scheduler';
 import type { Player, Pool } from '../types/tournament';
 
-type Mode = 'manual' | 'shuffle';
+type Mode = 'manual' | 'shuffle' | 'csv';
 
 export default function TeamSetup() {
   const { id } = useParams<{ id: string }>();
@@ -39,6 +39,9 @@ export default function TeamSetup() {
   // Shuffle mode state
   const [playersText, setPlayersText] = useState('');
   const [numberOfTeams, setNumberOfTeams] = useState(2);
+
+  // CSV mode state
+  const [csvPreview, setCsvPreview] = useState<{ name: string; players: { firstName: string; className?: string }[] }[]>([]);
 
   if (!id || !tournament) {
     return (
@@ -150,6 +153,77 @@ export default function TeamSetup() {
     }
   };
 
+  // --- CSV import handlers ---
+
+  const parseCSV = (text: string) => {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const teamsMap = new Map<string, { firstName: string; className?: string }[]>();
+
+    for (const line of lines) {
+      // Support both ; and , as separator (Excel FR uses ;)
+      const sep = line.includes(';') ? ';' : ',';
+      const parts = line.split(sep).map(p => p.trim().replace(/^"|"$/g, ''));
+      if (parts.length < 2) continue;
+
+      const teamName = parts[0];
+      const firstName = parts[1];
+      if (!teamName || !firstName) continue;
+
+      const className = parts[2] || undefined;
+
+      if (!teamsMap.has(teamName)) {
+        teamsMap.set(teamName, []);
+      }
+      teamsMap.get(teamName)!.push({ firstName, className });
+    }
+
+    return Array.from(teamsMap.entries()).map(([name, players]) => ({ name, players }));
+  };
+
+  const handleCSVFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      if (!text) return;
+      const teams = parseCSV(text);
+      setCsvPreview(teams);
+    };
+    reader.readAsText(file, 'UTF-8');
+    // Reset input so same file can be re-selected
+    e.target.value = '';
+  };
+
+  const handleCSVImport = () => {
+    if (csvPreview.length === 0) {
+      alert('Aucune equipe detectee dans le fichier.');
+      return;
+    }
+
+    if (tournament.teams.length > 0) {
+      if (!window.confirm('Des equipes existent deja. L\'import va les remplacer. Continuer ?')) {
+        return;
+      }
+      for (const t of [...tournament.teams]) {
+        removeTeam(id, t.id);
+      }
+    }
+
+    for (const team of csvPreview) {
+      const teamId = addTeam(id, team.name);
+      for (const player of team.players) {
+        addPlayer(id, teamId, {
+          firstName: player.firstName,
+          className: player.className,
+        });
+      }
+    }
+
+    setCsvPreview([]);
+  };
+
   // --- Launch tournament ---
 
   const canLaunch = tournament.teams.length >= 2;
@@ -227,6 +301,12 @@ export default function TeamSetup() {
           onClick={() => setMode('shuffle')}
         >
           Tirage au sort
+        </button>
+        <button
+          style={mode === 'csv' ? styles.toggleActive : styles.toggleInactive}
+          onClick={() => setMode('csv')}
+        >
+          Import CSV
         </button>
       </div>
 
@@ -370,6 +450,161 @@ export default function TeamSetup() {
             <>
               <h2 style={{ ...styles.sectionTitle, marginTop: 24, marginBottom: 12 }}>
                 Resultat du tirage
+              </h2>
+              {tournament.teams.map((team) => {
+                const pi = getPlayerInput(team.id);
+                return (
+                  <div key={team.id} style={styles.card}>
+                    <div style={styles.teamHeader}>
+                      <input
+                        style={styles.teamNameInput}
+                        value={team.name}
+                        onChange={(e) => handleTeamNameChange(team.id, e.target.value)}
+                      />
+                      <button
+                        style={styles.btnDanger}
+                        onClick={() => handleRemoveTeam(team.id, team.name)}
+                        title="Supprimer l'equipe"
+                      >
+                        Supprimer
+                      </button>
+                    </div>
+
+                    {team.players.length > 0 && (
+                      <ul style={styles.playerList}>
+                        {team.players.map((player) => (
+                          <li key={player.id} style={styles.playerItem}>
+                            <span style={styles.playerName}>
+                              {player.firstName}
+                              {player.className && (
+                                <span style={styles.playerClass}> - {player.className}</span>
+                              )}
+                            </span>
+                            <button
+                              style={styles.btnRemovePlayer}
+                              onClick={() => handleRemovePlayer(team.id, player.id)}
+                              title="Supprimer le joueur"
+                            >
+                              &#10005;
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    <div style={styles.addPlayerRow}>
+                      <input
+                        style={{ ...styles.input, flex: 2 }}
+                        placeholder="Prenom"
+                        value={pi.firstName}
+                        onChange={(e) =>
+                          setPlayerInput(team.id, { ...pi, firstName: e.target.value })
+                        }
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddPlayer(team.id)}
+                      />
+                      <input
+                        style={{ ...styles.input, flex: 1 }}
+                        placeholder="Classe (optionnel)"
+                        value={pi.className}
+                        onChange={(e) =>
+                          setPlayerInput(team.id, { ...pi, className: e.target.value })
+                        }
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddPlayer(team.id)}
+                      />
+                      <button
+                        style={styles.btnSmallPrimary}
+                        onClick={() => handleAddPlayer(team.id)}
+                      >
+                        + Joueur
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ===== CSV MODE ===== */}
+      {mode === 'csv' && (
+        <div>
+          <div style={styles.card}>
+            <h2 style={styles.sectionTitle}>Importer depuis un fichier CSV</h2>
+            <p style={styles.hint}>
+              Format attendu : une ligne par joueur, colonnes separees par <strong>;</strong> ou <strong>,</strong>
+            </p>
+            <p style={styles.hint}>
+              <strong>Equipe ; Prenom ; Classe (optionnel)</strong>
+            </p>
+            <p style={{ ...styles.hint, marginBottom: 12 }}>
+              Exemple :<br />
+              Equipe A ; Lucas ; 6eA<br />
+              Equipe A ; Emma ; 5eB<br />
+              Equipe B ; Noah ; 6eA<br />
+              Equipe B ; Lea
+            </p>
+            <label
+              style={{
+                ...styles.btnPrimary,
+                display: 'inline-block',
+                textAlign: 'center' as const,
+              }}
+            >
+              Choisir un fichier CSV
+              <input
+                type="file"
+                accept=".csv,.txt"
+                style={{ display: 'none' }}
+                onChange={handleCSVFile}
+              />
+            </label>
+          </div>
+
+          {/* CSV Preview */}
+          {csvPreview.length > 0 && (
+            <>
+              <div style={styles.card}>
+                <h2 style={styles.sectionTitle}>
+                  Apercu de l'import ({csvPreview.length} equipe{csvPreview.length !== 1 ? 's' : ''},{' '}
+                  {csvPreview.reduce((s, t) => s + t.players.length, 0)} joueur{csvPreview.reduce((s, t) => s + t.players.length, 0) !== 1 ? 's' : ''})
+                </h2>
+                {csvPreview.map((team, i) => (
+                  <div key={i} style={{ marginBottom: i < csvPreview.length - 1 ? 12 : 0 }}>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: '#1e293b', margin: '0 0 4px' }}>
+                      {team.name} ({team.players.length} joueur{team.players.length !== 1 ? 's' : ''})
+                    </p>
+                    <ul style={{ ...styles.playerList, marginBottom: 0 }}>
+                      {team.players.map((p, j) => (
+                        <li key={j} style={styles.playerItem}>
+                          <span style={styles.playerName}>
+                            {p.firstName}
+                            {p.className && (
+                              <span style={styles.playerClass}> - {p.className}</span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <button style={styles.btnPrimary} onClick={handleCSVImport}>
+                  Importer ces equipes
+                </button>
+                <button style={styles.btnSecondary} onClick={() => setCsvPreview([])}>
+                  Annuler
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Show resulting teams after import */}
+          {tournament.teams.length > 0 && (
+            <>
+              <h2 style={{ ...styles.sectionTitle, marginTop: 24, marginBottom: 12 }}>
+                Equipes importees
               </h2>
               {tournament.teams.map((team) => {
                 const pi = getPlayerInput(team.id);
