@@ -377,7 +377,7 @@ export default function TeamSetup() {
                 <div style={styles.addPlayerRow}>
                   <input
                     style={{ ...styles.input, flex: 2 }}
-                    placeholder="Prenom"
+                    placeholder="NOM Prenom"
                     value={pi.firstName}
                     onChange={(e) =>
                       setPlayerInput(team.id, { ...pi, firstName: e.target.value })
@@ -418,12 +418,12 @@ export default function TeamSetup() {
           <div style={styles.card}>
             <h2 style={styles.sectionTitle}>Liste des joueurs</h2>
             <p style={styles.hint}>
-              Un joueur par ligne. Format : "Prenom" ou "Prenom - Classe"
+              Un joueur par ligne. Format : "NOM Prenom" ou "NOM Prenom - Classe"
             </p>
             <textarea
               style={styles.textarea}
               rows={10}
-              placeholder={"Lucas\nEmma - 6eA\nNoah - 5eB\nLea"}
+              placeholder={"DUPONT Lucas\nMARTIN Emma - 6eA\nBERNARD Noah - 5eB\nPETIT Lea"}
               value={playersText}
               onChange={(e) => setPlayersText(e.target.value)}
             />
@@ -495,7 +495,7 @@ export default function TeamSetup() {
                     <div style={styles.addPlayerRow}>
                       <input
                         style={{ ...styles.input, flex: 2 }}
-                        placeholder="Prenom"
+                        placeholder="NOM Prenom"
                         value={pi.firstName}
                         onChange={(e) =>
                           setPlayerInput(team.id, { ...pi, firstName: e.target.value })
@@ -535,14 +535,14 @@ export default function TeamSetup() {
               Format attendu : une ligne par joueur, colonnes separees par <strong>;</strong> ou <strong>,</strong>
             </p>
             <p style={styles.hint}>
-              <strong>Equipe ; Prenom ; Classe (optionnel)</strong>
+              <strong>Equipe ; NOM Prenom ; Classe (optionnel)</strong>
             </p>
             <p style={{ ...styles.hint, marginBottom: 12 }}>
               Exemple :<br />
-              Equipe A ; Lucas ; 6eA<br />
-              Equipe A ; Emma ; 5eB<br />
-              Equipe B ; Noah ; 6eA<br />
-              Equipe B ; Lea
+              Equipe A ; DUPONT Lucas ; 6eA<br />
+              Equipe A ; MARTIN Emma ; 5eB<br />
+              Equipe B ; BERNARD Noah ; 6eA<br />
+              Equipe B ; PETIT Lea
             </p>
             <label
               style={{
@@ -650,7 +650,7 @@ export default function TeamSetup() {
                     <div style={styles.addPlayerRow}>
                       <input
                         style={{ ...styles.input, flex: 2 }}
-                        placeholder="Prenom"
+                        placeholder="NOM Prenom"
                         value={pi.firstName}
                         onChange={(e) =>
                           setPlayerInput(team.id, { ...pi, firstName: e.target.value })
