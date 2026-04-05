@@ -122,6 +122,10 @@ export default function Home() {
           ))}
         </div>
       )}
+
+      <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12, marginTop: 40, marginBottom: 8 }}>
+        Max Tournoi Management
+      </p>
     </div>
   );
 }
