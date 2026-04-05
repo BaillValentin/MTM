@@ -20,7 +20,7 @@ export default function Schedule() {
   const setKnockoutRounds = useTournamentStore(s => s.setKnockoutRounds);
 
   const [activeRotation, setActiveRotation] = useState(0);
-  const [scores, setScores] = useState<Record<string, { a: number; b: number }>>({});
+  const [scores, setScores] = useState<Record<string, { a: string; b: string }>>({});
   const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [showBracket, setShowBracket] = useState(true);
 
@@ -157,8 +157,7 @@ export default function Schedule() {
 
   // --- Cascade on edit ---
   const handleValidateKnockout = (matchId: string, matchRound: number, matchLevel: number) => {
-    const s = scores[matchId];
-    updateMatch(id, matchId, { scoreA: s?.a ?? 0, scoreB: s?.b ?? 0, status: 'finished' });
+    updateMatch(id, matchId, { scoreA: getScoreNum(matchId, 'a'), scoreB: getScoreNum(matchId, 'b'), status: 'finished' });
     setEditing(prev => ({ ...prev, [matchId]: false }));
 
     // Remove all later rounds at same level AND all consolation levels generated from this level's later rounds
@@ -196,17 +195,22 @@ export default function Schedule() {
       handleValidateKnockout(matchId, match.knockoutRound, getLevel(match));
       return;
     }
-    const s = scores[matchId];
-    updateMatch(id, matchId, { scoreA: s?.a ?? 0, scoreB: s?.b ?? 0, status: 'finished' });
+    updateMatch(id, matchId, { scoreA: getScoreNum(matchId, 'a'), scoreB: getScoreNum(matchId, 'b'), status: 'finished' });
     setEditing(prev => ({ ...prev, [matchId]: false }));
   };
   const handleEdit = (matchId: string, scoreA: number, scoreB: number) => {
-    setScores(prev => ({ ...prev, [matchId]: { a: scoreA, b: scoreB } }));
+    setScores(prev => ({ ...prev, [matchId]: { a: String(scoreA), b: String(scoreB) } }));
     setEditing(prev => ({ ...prev, [matchId]: true }));
   };
   const handleForfait = (matchId: string) => { updateMatch(id, matchId, { scoreA: 0, scoreB: 0, status: 'forfeit' }); };
-  const setScore = (matchId: string, side: 'a' | 'b', value: number) => {
-    setScores(prev => ({ ...prev, [matchId]: { a: prev[matchId]?.a ?? 0, b: prev[matchId]?.b ?? 0, [side]: value } }));
+  const setScore = (matchId: string, side: 'a' | 'b', value: string) => {
+    // Only allow digits
+    const clean = value.replace(/[^0-9]/g, '');
+    setScores(prev => ({ ...prev, [matchId]: { a: prev[matchId]?.a ?? '', b: prev[matchId]?.b ?? '', [side]: clean } }));
+  };
+  const getScoreNum = (matchId: string, side: 'a' | 'b') => {
+    const v = scores[matchId]?.[side];
+    return v ? parseInt(v, 10) : 0;
   };
 
   // --- Launch knockout from pools ---
@@ -325,12 +329,16 @@ export default function Schedule() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
               <span style={{ flex: 1, fontSize: 14, fontWeight: 600, textAlign: 'right' }}>{getTeamName(tournament, match.teamAId)}</span>
-              <input type="number" min={0} value={scores[match.id]?.a ?? 0}
-                onChange={e => setScore(match.id, 'a', parseInt(e.target.value) || 0)}
+              <input type="text" inputMode="numeric" pattern="[0-9]*" value={scores[match.id]?.a ?? ''}
+                onChange={e => setScore(match.id, 'a', e.target.value)}
+                onFocus={e => e.target.select()}
+                placeholder="0"
                 style={{ width: 52, padding: '8px 4px', borderRadius: 8, border: '2px solid #2563eb', fontSize: 20, textAlign: 'center', fontWeight: 700 }} />
               <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: 18 }}>-</span>
-              <input type="number" min={0} value={scores[match.id]?.b ?? 0}
-                onChange={e => setScore(match.id, 'b', parseInt(e.target.value) || 0)}
+              <input type="text" inputMode="numeric" pattern="[0-9]*" value={scores[match.id]?.b ?? ''}
+                onChange={e => setScore(match.id, 'b', e.target.value)}
+                onFocus={e => e.target.select()}
+                placeholder="0"
                 style={{ width: 52, padding: '8px 4px', borderRadius: 8, border: '2px solid #2563eb', fontSize: 20, textAlign: 'center', fontWeight: 700 }} />
               <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{getTeamName(tournament, match.teamBId)}</span>
             </div>
